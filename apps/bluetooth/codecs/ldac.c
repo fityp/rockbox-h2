@@ -38,6 +38,11 @@
 // Initial EQMID for ABR mode.
 #define LDAC_ABR_MODE_EQMID LDACBT_EQMID_SQ
 
+// Bytes Bluedroid holds back from the stream MTU it reports to the codec;
+// must match BTC_AV_AUDIO_MTU_RESERVE in
+// lib/bluedroid/src/btc/profile/std/a2dp/btc_av.c.
+#define BTC_AV_MTU_RESERVE 1
+
 // A2DP LDAC encoder interval in milliseconds
 #define A2DP_LDAC_ENCODER_INTERVAL_MS 20
 #define A2DP_LDAC_MEDIA_BYTES_PER_FRAME 128
@@ -268,8 +273,12 @@ static void a2dp_vendor_ldac_encoder_update(uint32_t freq, esp_a2d_mcc_t *pref_m
 
   // Initialize the encoder.
   // NOTE: MTU in the initialization must include the AVDT media header size.
+  // Add back Bluedroid's reserve too, or a sink offering exactly
+  // LDACBT_MTU_REQUIRED (679) is rejected. libldac packs for 679 regardless.
   int result = ldacBT_init_handle_encode(a2dP_ldac_encoder_cb.ldac_handle,
-                                         a2dP_ldac_encoder_cb.TxAaMtuSize + AVDT_MEDIA_HDR_SIZE,
+                                         a2dP_ldac_encoder_cb.TxAaMtuSize +
+                                         AVDT_MEDIA_HDR_SIZE +
+                                         BTC_AV_MTU_RESERVE,
                                          ldac_eqmid, p_encoder_params->channel_mode,
                                          p_encoder_params->pcm_fmt, p_encoder_params->sample_rate);
   if (result != 0) {

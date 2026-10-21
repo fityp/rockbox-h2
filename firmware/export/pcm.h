@@ -64,6 +64,9 @@ bool pcm_is_initialized(void);
 enum pcm_sink_ids pcm_current_sink(void);
 const struct pcm_sink_caps* pcm_sink_caps(enum pcm_sink_ids sink);
 bool pcm_switch_sink(enum pcm_sink_ids sink);
+#ifdef HAVE_BLUETOOTH
+void pcm_set_sink_volume(enum pcm_sink_ids sink, int vol_l, int vol_r);
+#endif
 
 /* shortcut for plugins */
 const struct pcm_sink_caps* pcm_current_sink_caps(void);

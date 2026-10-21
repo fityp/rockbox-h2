@@ -831,6 +831,10 @@ struct user_settings
     int usb_audio;
 #endif
 
+#ifdef HAVE_BLUETOOTH
+    bool bluetooth;
+#endif
+
 #if defined(USB_ENABLE_STORAGE) && defined(HAVE_MULTIDRIVE)
     bool usb_skip_first_drive;
 #endif

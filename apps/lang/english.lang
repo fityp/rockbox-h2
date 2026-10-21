@@ -17231,3 +17231,224 @@
     touchscreen: "Touchscreen Flick Shortcuts"
   </voice>
 </phrase>
+<phrase>
+  id: LANG_BLUETOOTH_SETTINGS
+  desc: in settings menu
+  user: core
+  <source>
+    *: none
+    bluetooth: "Bluetooth Settings"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Bluetooth Settings"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Bluetooth Settings"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_ENABLE
+  desc: in bluetooth settings
+  user: core
+  <source>
+    *: none
+    bluetooth: "Enable Bluetooth"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Enable Bluetooth"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Enable Bluetooth"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_DISABLING
+  desc: splash while bluetooth shuts down
+  user: core
+  <source>
+    *: none
+    bluetooth: "Disabling Bluetooth..."
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Disabling Bluetooth..."
+  </dest>
+  <voice>
+    *: none
+    bluetooth: ""
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_PAIRED_DEVICES
+  desc: in Bluetooth Settings
+  user: core
+  <source>
+    *: none
+    bluetooth: "Paired Devices"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Paired Devices"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Paired Devices"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_PAIR_NEW_DEVICE
+  desc: in Bluetooth Settings
+  user: core
+  <source>
+    *: none
+    bluetooth: "Pair New Device"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Pair New Device"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Pair New Device"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_CONNECTING
+  desc: splash while connecting to a Bluetooth device
+  user: core
+  <source>
+    *: none
+    bluetooth: "Connecting..."
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Connecting..."
+  </dest>
+  <voice>
+    *: none
+    bluetooth: ""
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_CONNECT_FAILED
+  desc: splash when a Bluetooth device could not be connected
+  user: core
+  <source>
+    *: none
+    bluetooth: "Could not connect"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Could not connect"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: ""
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_CONNECTED
+  desc: shown after the name of the connected Bluetooth device
+  user: core
+  <source>
+    *: none
+    bluetooth: "Connected"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Connected"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Connected"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_CONNECT
+  desc: Bluetooth device action
+  user: core
+  <source>
+    *: none
+    bluetooth: "Connect"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Connect"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Connect"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_DISCONNECT
+  desc: Bluetooth device action
+  user: core
+  <source>
+    *: none
+    bluetooth: "Disconnect"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Disconnect"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Disconnect"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_FORGET
+  desc: Bluetooth device action: unpair the device
+  user: core
+  <source>
+    *: none
+    bluetooth: "Forget"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Forget"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Forget"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_FORGET_QUERY
+  desc: confirmation before unpairing a Bluetooth device
+  user: core
+  <source>
+    *: none
+    bluetooth: "Forget this device?"
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Forget this device?"
+  </dest>
+  <voice>
+    *: none
+    bluetooth: "Forget this device?"
+  </voice>
+</phrase>
+<phrase>
+  id: LANG_BLUETOOTH_DISCONNECTING
+  desc: splash while disconnecting a Bluetooth device
+  user: core
+  <source>
+    *: none
+    bluetooth: "Disconnecting..."
+  </source>
+  <dest>
+    *: none
+    bluetooth: "Disconnecting..."
+  </dest>
+  <voice>
+    *: none
+    bluetooth: ""
+  </voice>
+</phrase>

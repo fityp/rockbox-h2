@@ -41,6 +41,7 @@
 #include "settings.h"
 #include "core_alloc.h"
 #include "pcm_mixer.h"
+#include "pcm.h"
 #include "dsp_core.h"
 
 #define LOGF_ENABLE
@@ -340,8 +341,28 @@ static struct usb_class_driver_ep_allocation ep_allocs[2] = {
  *
  * Making the executive decision to only export frequencies 44.1k+.
  */
-#define NR_BUFFERS      32
 #define MINIMUM_BUFFERS_QUEUED 16
+#ifdef HAVE_BLUETOOTH
+/* The Bluetooth sink pulls a whole codec period (~20 ms, at tick granularity)
+ * at once, which would drain a 16-buffer queue every time; keep more queued
+ * while it is the active sink. The I2S DAC keeps the short queue. Gaps of up
+ * to ~18 ms between pulls were measured, so leave ample room above the target
+ * as well as below it. */
+#define NR_BUFFERS      128
+#define MINIMUM_BUFFERS_QUEUED_BT 48
+static inline int minimum_buffers_queued(void)
+{
+    if (pcm_current_sink() == PCM_SINK_BLUETOOTH)
+        return MINIMUM_BUFFERS_QUEUED_BT;
+    return MINIMUM_BUFFERS_QUEUED;
+}
+#else
+#define NR_BUFFERS      32
+static inline int minimum_buffers_queued(void)
+{
+    return MINIMUM_BUFFERS_QUEUED;
+}
+#endif
 /* size of each buffer: must be smaller than 1023 (max isochronous packet size) */
 #define BUFFER_SIZE     1023
 /* make sure each buffer size is actually a multiple of 32 bytes to avoid any
@@ -354,6 +375,11 @@ int tmp_saved_vol;
 
 /* buffers used for usb, queuing and playback */
 static unsigned char *rx_buffer;
+#ifdef HAVE_BLUETOOTH
+/* two receive halves; rx_buffer always points at the one armed for the
+ * controller (see usb_audio_fast_transfer_complete) */
+static unsigned char *rx_buffer_base;
+#endif
 int rx_buffer_handle;
 /* buffer size */
 static int rx_buf_size[NR_BUFFERS]; // only used for debug screen counter now
@@ -473,6 +499,53 @@ static void encodeFBfixedpt(uint8_t arr[4], int32_t value, bool portspeed)
 
 }
 
+#ifdef HAVE_BLUETOOTH
+/* The built-in DAC supports every rate we advertise, so its stream passes
+ * through the DSP at the host rate. A Bluetooth sink only supports the rates
+ * of the negotiated A2DP codec; when the host rate isn't one of them the mixer
+ * runs at the sink's default instead, so resample to it the same way local
+ * playback does (see codec_thread.c). The resampler stays inactive when the
+ * rates match. */
+static bool dsp_resampling = false;
+
+/* Host rate last handed to mixer_set_frequency(). That function compares
+ * against the sink's actual rate, which for Bluetooth can differ from the host
+ * rate (a 192 kHz host on a 96 kHz LDAC sink), so it would stop playback on
+ * every call; only call it when the host rate really changes. */
+static unsigned long mixer_host_rate = 0;
+
+static void set_mixer_frequency(void)
+{
+    unsigned long f = hw_freq_sampr[as_playback_freq_idx];
+    if (pcm_current_sink() == PCM_SINK_BLUETOOTH && f == mixer_host_rate)
+        return;
+    mixer_host_rate = f;
+    mixer_set_frequency(f);
+}
+
+static void update_dsp_frequency(void)
+{
+    if (dsp == NULL)
+        return;
+
+    if (pcm_current_sink() == PCM_SINK_BLUETOOTH)
+    {
+        dsp_configure(dsp, DSP_SET_OUT_FREQUENCY, mixer_get_frequency());
+        dsp_configure(dsp, DSP_SET_FREQUENCY,
+                      hw_freq_sampr[as_playback_freq_idx]);
+        dsp_resampling = true;
+    }
+    else if (dsp_resampling)
+    {
+        /* back to the DSP_RESET state: input rate follows output rate */
+        dsp_configure(dsp, DSP_SET_FREQUENCY, 0);
+        dsp_resampling = false;
+    }
+}
+#else
+static inline void update_dsp_frequency(void) {}
+#endif
+
 static void set_playback_sampling_frequency(unsigned long f)
 {
     // only values 44.1k and higher (array is in descending order)
@@ -488,7 +561,12 @@ static void set_playback_sampling_frequency(unsigned long f)
     logf("usbaudio: set playback sampling frequency to %lu Hz for a requested %lu Hz",
         hw_freq_sampr[as_playback_freq_idx], f);
 
+#ifdef HAVE_BLUETOOTH
+    set_mixer_frequency();
+#else
     mixer_set_frequency(hw_freq_sampr[as_playback_freq_idx]);
+#endif
+    update_dsp_frequency();
 }
 
 unsigned long usb_audio_get_playback_sampling_frequency(void)
@@ -521,7 +599,11 @@ int usb_audio_request_buf(void)
     audio_stop();
 
     // attempt to allocate the receive buffers
+#ifdef HAVE_BLUETOOTH
+    rx_buffer_handle = core_alloc(2 * REAL_BUF_SIZE);
+#else
     rx_buffer_handle = core_alloc(REAL_BUF_SIZE);
+#endif
     if (rx_buffer_handle < 0)
     {
         alloc_failed = true;
@@ -536,6 +618,9 @@ int usb_audio_request_buf(void)
 
         // get the pointer to the actual buffer location
         rx_buffer = core_get_data(rx_buffer_handle);
+#ifdef HAVE_BLUETOOTH
+        rx_buffer_base = rx_buffer;
+#endif
     }
 
     dsp_buf_handle = core_alloc(NR_BUFFERS * REAL_DSP_BUF_SIZE);
@@ -666,7 +751,16 @@ static int usb_audio_get_config_descriptor(unsigned char *dest, int max_packet_s
 static void playback_audio_get_more(const void **start, size_t *size)
 {
     /* if there are no more filled buffers, playback has just underflowed */
+#ifdef HAVE_BLUETOOTH
+    /* Equal indices also mean "completely full" once reception has stopped
+     * on overflow. That happens when the sink is slow to start (Bluetooth
+     * takes a few hundred ms to start an A2DP stream); treating it as empty
+     * would stall forever, as reception only resumes after a buffer is
+     * consumed below. */
+    if(rx_play_idx == rx_usb_idx && !usb_rx_overflow)
+#else
     if(rx_play_idx == rx_usb_idx)
+#endif
     {
         logf("usbaudio: playback underflow");
         playback_audio_underflow = true;
@@ -725,7 +819,12 @@ static void usb_audio_start_playback(void)
     audio_set_output_source(AUDIO_SRC_PLAYBACK);
 #endif
     logf("usbaudio: start playback at %lu Hz", hw_freq_sampr[as_playback_freq_idx]);
+#ifdef HAVE_BLUETOOTH
+    set_mixer_frequency();
+#else
     mixer_set_frequency(hw_freq_sampr[as_playback_freq_idx]);
+#endif
+    update_dsp_frequency();
     mixer_channel_set_amplitude(PCM_MIXER_CHAN_USBAUDIO, MIX_AMP_UNITY);
 
     usb_drv_recv_nonblocking(EP_ISO_OUT, rx_buffer, BUFFER_SIZE);
@@ -1177,6 +1276,10 @@ static int usb_audio_init_connection(void)
     usbaudio_active = true;
     dsp = dsp_get_config(CODEC_IDX_AUDIO);
     dsp_configure(dsp, DSP_RESET, 0);
+#ifdef HAVE_BLUETOOTH
+    dsp_resampling = false;
+    mixer_host_rate = 0;
+#endif
     dsp_configure(dsp, DSP_SET_STEREO_MODE, STEREO_INTERLEAVED);
     dsp_configure(dsp, DSP_SET_SAMPLE_DEPTH, 16);
 #ifdef HAVE_PITCHCONTROL
@@ -1225,15 +1328,28 @@ bool usb_audio_get_playing(void)
 }
 
 /* determine if enough prebuffering has been done to restart audio */
+#ifdef HAVE_BLUETOOTH
+int usb_audio_get_prebuffering(void);
+#endif
 bool prebuffering_done(void)
 {
     /* restart audio if at least MINIMUM_BUFFERS_QUEUED buffers are filled */
+#ifdef HAVE_BLUETOOTH
+    int diff = usb_audio_get_prebuffering();
+#else
     int diff = (rx_usb_idx - rx_play_idx + NR_BUFFERS) % NR_BUFFERS;
-    return diff >= MINIMUM_BUFFERS_QUEUED;
+#endif
+    return diff >= minimum_buffers_queued();
 }
 
 int usb_audio_get_prebuffering(void)
 {
+#ifdef HAVE_BLUETOOTH
+    /* see playback_audio_get_more(): equal indices with reception stopped
+     * on overflow mean all buffers are filled */
+    if (usb_rx_overflow && rx_usb_idx == rx_play_idx)
+        return NR_BUFFERS;
+#endif
     return (rx_usb_idx - rx_play_idx + NR_BUFFERS) % NR_BUFFERS;
 }
 
@@ -1243,7 +1359,7 @@ int32_t usb_audio_get_prebuffering_avg(void)
     {
         return TO_16DOT16_FIXEDPT(usb_audio_get_prebuffering());
     } else {
-        return (TO_16DOT16_FIXEDPT(buffers_filled_accumulator)/buffers_filled_avgcount) + TO_16DOT16_FIXEDPT(MINIMUM_BUFFERS_QUEUED);
+        return (TO_16DOT16_FIXEDPT(buffers_filled_accumulator)/buffers_filled_avgcount) + TO_16DOT16_FIXEDPT(minimum_buffers_queued());
     }
 }
 
@@ -1330,10 +1446,42 @@ static bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int le
         // debug screen counter
         samples_received = samples_received + length;
 
+#ifdef HAVE_BLUETOOTH
+        /* With the Bluetooth sink the next packet can arrive before the DSP
+         * pass below is done (the A2DP stack keeps other interrupts busy), and
+         * a 192 kHz packet that finds no transfer armed is dropped. So hand
+         * the other receive half to the controller first. The I2S DAC keeps
+         * the original order. */
+        bool early_rearm = pcm_current_sink() == PCM_SINK_BLUETOOTH;
+        unsigned char *rx_done = rx_buffer;
+        if(early_rearm)
+        {
+            rx_buffer = (rx_buffer == rx_buffer_base) ?
+                        rx_buffer_base + REAL_BUF_SIZE : rx_buffer_base;
+            int oldlevel = disable_irq_save();
+            /* same condition as below, evaluated before advancing */
+            if((rx_usb_idx + 1) % NR_BUFFERS != rx_play_idx)
+            {
+                logf("usbaudio: new transaction");
+                usb_drv_recv_nonblocking(EP_ISO_OUT, rx_buffer, BUFFER_SIZE);
+            }
+            else
+            {
+                logf("usbaudio: rx overflow");
+                usb_rx_overflow = true;
+            }
+            restore_irq(oldlevel);
+        }
+#endif
+
         // process through DSP right away!
         struct dsp_buffer src;
         src.remcount = length/4; // in samples
+#ifdef HAVE_BLUETOOTH
+        src.pin[0] = rx_done;
+#else
         src.pin[0] = rx_buffer;
+#endif
         src.proc_mask = 0;
 
         struct dsp_buffer dst;
@@ -1349,6 +1497,11 @@ static bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int le
         /* guard against IRQ to avoid race with completion audio completion */
         int oldlevel = disable_irq_save();
         /* setup a new transaction except if we ran out of buffers */
+#ifdef HAVE_BLUETOOTH
+        if(early_rearm)
+            ; /* already done before the DSP pass */
+        else
+#endif
         if(rx_usb_idx != rx_play_idx)
         {
             logf("usbaudio: new transaction");
@@ -1443,7 +1596,7 @@ static bool usb_audio_fast_transfer_complete(int ep, int dir, int status, int le
                 send_fb = true;
             }
         }
-        buffers_filled_accumulator = buffers_filled_accumulator + (usb_audio_get_prebuffering() - MINIMUM_BUFFERS_QUEUED);
+        buffers_filled_accumulator = buffers_filled_accumulator + (usb_audio_get_prebuffering() - minimum_buffers_queued());
         buffers_filled_avgcount++;
         if (usb_audio_get_prebuffering() < buffers_filled_min || buffers_filled_min == -1)
         {

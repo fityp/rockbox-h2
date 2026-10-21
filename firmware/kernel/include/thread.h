@@ -77,7 +77,7 @@
 #endif
 
 #ifdef HAVE_BLUETOOTH
-#define BT_EXTRA_THREADS 5
+#define BT_EXTRA_THREADS 6 /* +1 for bt_autostart */
 #else
 #define BT_EXTRA_THREADS 0
 #endif

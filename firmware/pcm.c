@@ -317,6 +317,16 @@ const struct pcm_sink_caps* pcm_sink_caps(enum pcm_sink_ids sink)
     return &sinks[sink]->caps;
 }
 
+#ifdef HAVE_BLUETOOTH
+/* Hand the volume to a sink that applies it itself, whether or not it is the
+ * current sink, so it is already right when the sink is switched to. */
+void pcm_set_sink_volume(enum pcm_sink_ids sink, int vol_l, int vol_r)
+{
+    if (sinks[sink]->ops.set_volume)
+        sinks[sink]->ops.set_volume(vol_l, vol_r);
+}
+#endif
+
 const struct pcm_sink_caps* pcm_current_sink_caps(void)
 {
     return pcm_sink_caps(pcm_current_sink());

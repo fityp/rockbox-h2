@@ -43,6 +43,11 @@ struct pcm_sink_ops {
     void (*unlock)(void);
     void (*play)(const void* addr, size_t size);
     void (*stop)(void);
+#ifdef HAVE_BLUETOOTH
+    /* Optional, for sinks that scale samples themselves. Volume in
+     * centibels, PCM_MUTE_LEVEL to mute. */
+    void (*set_volume)(int vol_l, int vol_r);
+#endif
 };
 
 struct pcm_sink {

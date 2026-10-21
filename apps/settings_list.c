@@ -37,6 +37,9 @@
 #endif
 #include "rbpaths.h"
 #include "settings_list.h"
+#ifdef HAVE_BLUETOOTH
+#include "bluetooth/bt.h"
+#endif
 #include "usb.h"
 #include "audio.h"
 #include "power.h"
@@ -2484,6 +2487,12 @@ const struct settings_list settings[] = {
             , ID2P(LANG_MOUSE_MODE)
 #endif
     ), /* CHOICE_SETTING( usb_keypad_mode ) */
+#endif
+
+#ifdef HAVE_BLUETOOTH
+    /* enabling/disabling is heavy: run it once a value is selected */
+    OFFON_SETTING(F_CB_ON_SELECT_ONLY|F_CB_ONLY_IF_CHANGED, bluetooth,
+                  LANG_BLUETOOTH_ENABLE, false, "bluetooth", bt_set_enabled),
 #endif
 
 #if defined(USB_ENABLE_AUDIO) || defined(HAVE_HOST_USB_AUDIO)

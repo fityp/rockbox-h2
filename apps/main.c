@@ -480,6 +480,7 @@ static void init(void)
 #include "tlsf.h"
 
 extern unsigned char btbuf[];
+#include "bluetooth/bt.h"
 
 static void init(void) INIT_ATTR;
 static void init(void)
@@ -814,6 +815,9 @@ static void init(void)
     CHART("<settings_apply_skins");
     settings_apply_skins();
     CHART(">settings_apply_skins");
+#ifdef HAVE_BLUETOOTH
+    bt_autostart();
+#endif
 }
 
 #ifdef CPU_PP
