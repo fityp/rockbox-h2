@@ -571,7 +571,6 @@ static BOOLEAN btc_av_state_opening_handler(btc_sm_event_t event, void *p_data)
                     param.a2d_report_snk_codec_caps_stat.mtu = mtu;
                     memcpy(&param.a2d_report_snk_codec_caps_stat.mcc, codec_caps, AVDT_CODEC_SIZE);
                     btc_a2d_cb_to_app(ESP_A2D_REPORT_SNK_CODEC_CAPS_EVT, &param);
-                    break;
                 } else {
                     BTC_TRACE_WARNING("No sink capabilities available yet");
                 }

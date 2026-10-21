@@ -277,7 +277,7 @@ static const UINT8 bta_av_sst_rcfg[][BTA_AV_NUM_COLS] = {
     /* AP_START_EVT */          {BTA_AV_SIGNORE,        BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },
     /* AP_STOP_EVT */           {BTA_AV_SIGNORE,        BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },
     /* AP_SET_DELAY_VALUE_EVT */{BTA_AV_SET_DELAY_VALUE,BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },
-    /* API_RECONFIG_EVT */      {BTA_AV_SIGNORE,        BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },
+    /* API_RECONFIG_EVT */      {BTA_AV_RECONFIG,       BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },
     /* API_PROTECT_REQ_EVT */   {BTA_AV_SIGNORE,        BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },
     /* API_PROTECT_RSP_EVT */   {BTA_AV_SIGNORE,        BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },
     /* API_RC_OPEN_EVT  */      {BTA_AV_SIGNORE,        BTA_AV_SIGNORE,        BTA_AV_RCFG_SST },

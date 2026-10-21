@@ -1330,6 +1330,17 @@ void bta_av_setconfig_rsp (tBTA_AV_SCB *p_scb, tBTA_AV_DATA *p_data)
             p_scb->avdt_version = AVDT_VERSION_SYNC;
         }
 
+        if (local_sep == AVDT_TSEP_SRC) {
+            /* As current AOSP does: always discover the sink's SEPs, so a
+             * better (e.g. vendor) codec can still be selected when the sink
+             * configured SBC itself. */
+            if (p_scb->uuid_int == 0) {
+                p_scb->uuid_int = p_scb->open_api.uuid;
+            }
+            bta_av_discover_req(p_scb, NULL);
+            return;
+        }
+
         if (p_scb->codec_type == BTA_AV_CODEC_SBC || num > 1
 #if (BTA_AV_CODEC_AAC_INCLUDED == TRUE)
             || p_scb->codec_type == BTA_AV_CODEC_M24

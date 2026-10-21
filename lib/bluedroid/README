@@ -23,6 +23,10 @@ src/btc/profile/std/l2cap/btc_l2cap.c: moved all includes after the BTC_L2CAP_IN
 src/btc/profile/std/l2cap/btc_l2cap.c: added a common/bt_target.h include before the guard
 src/btc/profile/std/a2dp/btc_a2dp_source.c: changed time_now_us to use Rockbox tick.h, includes adjusted accordingly
 src/btc/profile/std/a2dp/bta_av_co.c: removed esp_attr.h include
+src/btc/profile/std/a2dp/bta_av_co.c: bta_av_co_audio_disc_res no longer returns when the peer is still marked opened (matches AOSP), so the reconfigure fallback after a sink-initiated SET_CONFIG can rediscover
+src/bta/av/bta_av_aact.c: bta_av_setconfig_rsp always discovers the sink's SEPs when the local SEP is a source (matches current AOSP main), instead of skipping discovery when the sink configured SBC, so a vendor codec can be selected after a sink-initiated SET_CONFIG
+src/bta/av/bta_av_ssm.c: handle API_RECONFIG_EVT in the RCFG state with BTA_AV_RECONFIG instead of ignoring it (matches AOSP since at least Oreo), so the reconfigure requested from bta_av_co_audio_getconfig during that fallback is carried out
+src/btc/profile/std/a2dp/btc_av.c: BTA_AV_OPEN_EVT no longer breaks out before btc_queue_advance after reporting the sink codec caps (upstream's break only left an inner codec switch), so the connect queue is released and later esp_a2d_source_connect calls are not dropped
 src/btc/profile/std/a2dp/bta_avrc.c: fixed typo in handle_rc_disconnect
 src/btc/core/btc_task.c: wrapped blufi includes in a BLUFI_INCLUDED guard
 src/btc/core/btc_task.c: changed BTC_TASK_PRIO define to use PRIORITY_REALTIME

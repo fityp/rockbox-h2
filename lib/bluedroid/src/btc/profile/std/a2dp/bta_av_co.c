@@ -386,8 +386,11 @@ void bta_av_co_audio_disc_res(tBTA_AV_HNDL hndl, UINT8 num_seps, UINT8 num_snk,
 
     /* Sanity check : this should never happen */
     if (p_peer->opened) {
+        /* It does happen: after a sink-initiated SET_CONFIG, a rejected
+         * reconfigure makes bta_av_rcfg_open() stop (not close) the stream
+         * and rediscover. Keep going, as AOSP does, or the results needed to
+         * reconfigure are dropped and the link is abandoned. */
         APPL_TRACE_ERROR("bta_av_co_audio_disc_res peer already opened");
-        return;
     }
 
     /* Copy the discovery results */

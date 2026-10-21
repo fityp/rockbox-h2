@@ -354,7 +354,7 @@ static int get_config_size(const config_t *config)
 
 static int get_config_size_from_flash(int fp)
 {
-    assert(fp != 0);
+    assert(fp >= 0); /* Rockbox file descriptors start at 0 */
 
     size_t length = ffilesize(fp);
     return length;
@@ -479,7 +479,7 @@ static char *trim(char *str)
 
 static void config_parse(int fp, config_t *config)
 {
-    assert(fp != 0);
+    assert(fp >= 0); /* Rockbox file descriptors start at 0 */
     assert(config != NULL);
 
     int line_num = 0;
