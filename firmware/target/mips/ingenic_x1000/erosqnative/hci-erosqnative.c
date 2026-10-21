@@ -29,6 +29,7 @@
 #include "panic.h"
 #include "thread.h"
 #include "uart-x1000.h"
+#include "x1000/uart.h"
 #include "semaphore.h"
 #include "bcm_firmware.h"
 
@@ -48,9 +49,27 @@ typedef struct {
     uint32_t direction;
 } pcap_header_t;
 
-#define HCI_STACK_SIZE (DEFAULT_STACK_SIZE + HCI_RECV_BUF_SIZE + 1024)
+#define HCI_STACK_SIZE (0x2000 + HCI_RECV_BUF_SIZE + 1024)
+
+static void hci_log_packet(const uint8_t *data, size_t len, uint32_t direction)
+{
+    if (hci_log_fd == -1)
+        return;
+    mutex_lock(&hci_log_mutex);
+    pcap_header_t header = {
+        .seconds = current_tick,
+        .microseconds = 0,
+        .captured_packet_length = len + 4,
+        .original_packet_length = len + 4,
+        .direction = direction,
+    };
+    write(hci_log_fd, &header, 20);
+    write(hci_log_fd, data, len);
+    fsync(hci_log_fd);
+    mutex_unlock(&hci_log_mutex);
+}
 #else
-#define HCI_STACK_SIZE (DEFAULT_STACK_SIZE + HCI_RECV_BUF_SIZE)
+#define HCI_STACK_SIZE (0x2000 + HCI_RECV_BUF_SIZE)
 #endif
 
 void hci_send_uart(uint8_t *data, uint16_t len) {
@@ -73,81 +92,80 @@ void hci_send_uart(uint8_t *data, uint16_t len) {
     uart_tx(PORT_UART0, data, len);
 }
 
+/* Set by bt_hci_disable() to make the receive thread exit */
+static volatile bool hci_stop;
+static unsigned int hci_thread_id;
+
+/* Receives until data holds `want` bytes. Returns false, dropping the packet,
+ * if bt_hci_disable() shuts the UART down in the meantime. */
+static bool hci_recv_until(uint8_t *data, size_t *recvd, size_t want)
+{
+    while (*recvd < want) {
+        if (hci_stop)
+            return false;
+        *recvd += uart_rx(PORT_UART0, data + *recvd, want - *recvd);
+    }
+    return true;
+}
+
 size_t hci_recv_uart(uint8_t *data, size_t len) {
     if (len == 0) {
         panicf("hci recv buffer too small, got %u but wanted at least 1", len);
     }
-    size_t recvd = uart_rx(PORT_UART0, data, 1);
-    if (recvd > 0) {
-        size_t expected;
-        if (data[0] == 0x01) {
-            if (len < 4) {
-                panicf("hci recv buffer too small, got %u but wanted at least 4", len);
-            }
-            while (recvd < 4) {
-                recvd += uart_rx(PORT_UART0, recvd + data, 4 - recvd);
-            }
-            expected = (((size_t) data[3]) & 0xFF) + 4;
-        } else if (data[0] == 0x02) {
-            if (len < 5) {
-                panicf("hci recv buffer too small, got %u but wanted at least 5", len);
-            }
-            while (recvd < 5) {
-                recvd += uart_rx(PORT_UART0, recvd + data, 5 - recvd);
-            }
-            expected = ((((size_t) data[3]) & 0xFF) | ((((size_t) data[4]) << 8) & 0xFF)) + 5;
-        } else if (data[0] == 0x03) {
-            if (len < 4) {
-                panicf("hci recv buffer too small, got %u but wanted at least 4", len);
-            }
-            while (recvd < 4) {
-                recvd += uart_rx(PORT_UART0, recvd + data, 4 - recvd);
-            }
-            expected = (((size_t) data[3]) & 0xFF) + 4;
-        } else if (data[0] == 0x04) {
-            if (len < 3) {
-                panicf("hci recv buffer too small, got %u but wanted at least 3", len);
-            }
-            while (recvd < 3) {
-                recvd += uart_rx(PORT_UART0, recvd + data, 3 - recvd);
-            }
-            expected = (((size_t) data[2]) & 0xFF) + 3;
-        } else if (data[0] == 0x05) {
-            if (len < 5) {
-                panicf("hci recv buffer too small, got %u but wanted at least 5", len);
-            }
-            while (recvd < 5) {
-                recvd += uart_rx(PORT_UART0, recvd + data, 5 - recvd);
-            }
-            expected = ((((size_t) data[3]) & 0xFF) | ((((size_t) data[4]) << 8) & 0xFF)) + 5;
-        } else {
-            // Unknown frame type.
-            // Panic.
-            panicf("hci got unknown frame type %d", data[0]);
+    size_t recvd = 0;
+    if (!hci_recv_until(data, &recvd, 1))
+        return 0;
+    size_t expected;
+    if (data[0] == 0x01) {
+        if (len < 4) {
+            panicf("hci recv buffer too small, got %u but wanted at least 4", len);
         }
-        if (len < expected) {
-            panicf("hci recv buffer too small, got %u but wanted at least %u", len, expected);
+        if (!hci_recv_until(data, &recvd, 4))
+            return 0;
+        expected = (((size_t) data[3]) & 0xFF) + 4;
+    } else if (data[0] == 0x02) {
+        if (len < 5) {
+            panicf("hci recv buffer too small, got %u but wanted at least 5", len);
         }
-        while (recvd < expected) {
-            recvd += uart_rx(PORT_UART0, recvd + data, expected - recvd);
+        if (!hci_recv_until(data, &recvd, 5))
+            return 0;
+        /* 16-bit little-endian data length */
+        expected = (((size_t) data[3]) | (((size_t) data[4]) << 8)) + 5;
+    } else if (data[0] == 0x03) {
+        if (len < 4) {
+            panicf("hci recv buffer too small, got %u but wanted at least 4", len);
         }
-#ifdef BT_DEBUG_PCAP
-        if (hci_log_fd != -1) {
-            mutex_lock(&hci_log_mutex);
-            pcap_header_t header = {
-                .seconds = current_tick,
-                .microseconds = 0,
-                .captured_packet_length = recvd + 4,
-                .original_packet_length = recvd + 4,
-                .direction = 0x00000000,
-            };
-            write(hci_log_fd, &header, 20);
-            write(hci_log_fd, data, recvd);
-            fsync(hci_log_fd);
-            mutex_unlock(&hci_log_mutex);
+        if (!hci_recv_until(data, &recvd, 4))
+            return 0;
+        expected = (((size_t) data[3]) & 0xFF) + 4;
+    } else if (data[0] == 0x04) {
+        if (len < 3) {
+            panicf("hci recv buffer too small, got %u but wanted at least 3", len);
         }
-#endif
+        if (!hci_recv_until(data, &recvd, 3))
+            return 0;
+        expected = (((size_t) data[2]) & 0xFF) + 3;
+    } else if (data[0] == 0x05) {
+        if (len < 5) {
+            panicf("hci recv buffer too small, got %u but wanted at least 5", len);
+        }
+        if (!hci_recv_until(data, &recvd, 5))
+            return 0;
+        /* 14-bit little-endian data length */
+        expected = ((((size_t) data[3]) | (((size_t) data[4]) << 8)) & 0x3FFF) + 5;
+    } else {
+        // Unknown frame type.
+        // Panic.
+        panicf("hci got unknown frame type %d", data[0]);
     }
+    if (len < expected) {
+        panicf("hci recv buffer too small, got %u but wanted at least %u", len, expected);
+    }
+    if (!hci_recv_until(data, &recvd, expected))
+        return 0;
+#ifdef BT_DEBUG_PCAP
+    hci_log_packet(data, recvd, 0x00000000);
+#endif
     return recvd;
 }
 
@@ -179,7 +197,8 @@ void bluetooth_hci_task(void)
 
     while (true) {
         size_t recvd = hci_recv_uart(buf, HCI_RECV_BUF_SIZE);
-        if (esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_UNINITIALIZED) {
+        if (hci_stop ||
+            esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_UNINITIALIZED) {
             hci_callbacks = NULL;
             thread_exit();
             return;
@@ -188,13 +207,90 @@ void bluetooth_hci_task(void)
     }
 }
 
-void bt_hci_enable(void)
-{
-    uint8_t buf[HCI_RECV_BUF_SIZE];
+#define HCI_INIT_ATTEMPTS 3
+#define HCI_INIT_TIMEOUT  HZ
 
+/* Send one init command and wait (bounded) for its HCI event. The chip
+ * occasionally ignores the first command after power-on, so nothing here
+ * may block forever. */
+static bool hci_init_cmd(const uint8_t *cmd, size_t len)
+{
+    uint8_t evt[3 + 255];
+
+    hci_send_uart((uint8_t *)cmd, len);
+    if (uart_rx_tmo(PORT_UART0, evt, 3, HCI_INIT_TIMEOUT) != 3 ||
+        evt[0] != 0x04)
+        return false;
+    if (uart_rx_tmo(PORT_UART0, evt + 3, evt[2], HCI_INIT_TIMEOUT) != evt[2])
+        return false;
+#ifdef BT_DEBUG_PCAP
+    hci_log_packet(evt, 3 + evt[2], 0x00000000);
+#endif
+    return true;
+}
+
+/* Power-cycle the chip, load its patch RAM and switch to 3 Mbaud. */
+static bool hci_init_chip(void)
+{
+    /* Start from reset at 115200 baud, even if the chip was left running
+     * (at 3 Mbaud) before a warm reboot. */
+    gpio_set_level(GPIO_BT_REG_ON_HW4, 0);
+    /* Stay off long enough for a full reset. Ingenic's X1000 BT power driver
+     * waits 1 s after power-off; after only 100 ms the chip was seen not to
+     * come back up when Bluetooth was turned off and on again. */
+    sleep(HZ);
+    uart_init(PORT_UART0, 115200);
+    gpio_set_level(GPIO_BT_REG_ON_HW4, 1);
+    /* Give the chip time to boot before the first HCI command, then wait
+     * (bounded) for it to raise RTS, our CTS. The original firmware allows
+     * 1 s after power-on. */
+    sleep(HZ / 5);
+    long deadline = current_tick + HZ - HZ / 5;
+    while (!(REG_UART_UMSR(PORT_UART0) & BM_UART_UMSR_CTS) &&
+           TIME_BEFORE(current_tick, deadline))
+        sleep(1);
+
+    // HCI_Reset
+    if (!hci_init_cmd((uint8_t[]){0x01, 0x03, 0x0c, 0x00}, 4))
+        return false;
+
+    // Download_Minidriver
+    if (!hci_init_cmd((uint8_t[]){0x01, 0x2e, 0xfc, 0x00}, 4))
+        return false;
+
+    sleep(HZ / 20);
+
+    for (uint8_t **i = hcd_init_commands; *i != NULL; i++) {
+        if (!hci_init_cmd(*i, ((size_t) (*i)[3]) + 4))
+            return false;
+    }
+
+    // HCI_Reset
+    if (!hci_init_cmd((uint8_t[]){0x01, 0x03, 0x0c, 0x00}, 4))
+        return false;
+
+    // Update_UART_Baud_Rate
+    // Encoded_Baud_Rate: 0x0000 (unused)
+    // Explicit_Baud_Rate: 0x002dc6c0 (DEC 3000000)
+    if (!hci_init_cmd((uint8_t[]){0x01, 0x18, 0xfc, 0x06, 0x00, 0x00,
+                                  0xc0, 0xc6, 0x2d, 0x00}, 10))
+        return false;
+
+    uart_set_baud(PORT_UART0, 3000000);
+    return true;
+}
+
+/* Only the HW4 revision of the Eros Q native hardware has the BCM4343A1. */
+bool bt_hci_available(void)
+{
+    return device_data.hw_rev == 4;
+}
+
+bool bt_hci_enable(void)
+{
     if (device_data.hw_rev != 4) {
         panicf("hci not implemented for hw rev %d", device_data.hw_rev);
-        return;
+        return false;
     }
 
 #ifdef BT_DEBUG_PCAP
@@ -203,35 +299,15 @@ void bt_hci_enable(void)
     mutex_init(&hci_log_mutex);
 #endif
 
-    uart_init(PORT_UART0, 115200);
-    gpio_set_level(GPIO_BT_REG_ON_HW4, 1);
-
-    // HCI_Reset
-    hci_send_uart((uint8_t[]){0x01, 0x03, 0x0c, 0x00}, 4);
-    hci_recv_uart(buf, HCI_RECV_BUF_SIZE);
-
-    // Download_Minidriver
-    hci_send_uart((uint8_t[]){0x01, 0x2e, 0xfc, 0x00}, 4);
-    hci_recv_uart(buf, HCI_RECV_BUF_SIZE);
-
-    sleep(HZ / 20);
-
-    for (uint8_t **i = hcd_init_commands; *i != NULL; i++) {
-        hci_send_uart(*i, ((size_t) (*i)[3]) + 4);
-        hci_recv_uart(buf, HCI_RECV_BUF_SIZE);
+    bool ok = false;
+    for (int attempt = 0; attempt < HCI_INIT_ATTEMPTS && !ok; attempt++) {
+        ok = hci_init_chip();
     }
-
-    // HCI_Reset
-    hci_send_uart((uint8_t[]){0x01, 0x03, 0x0c, 0x00}, 4);
-    hci_recv_uart(buf, HCI_RECV_BUF_SIZE);
-
-    // Update_UART_Baud_Rate
-    // Encoded_Baud_Rate: 0x0000 (unused)
-    // Explicit_Baud_Rate: 0x002dc6c0 (DEC 3000000)
-    hci_send_uart((uint8_t[]){0x01, 0x18, 0xfc, 0x06, 0x00, 0x00, 0xc0, 0xc6, 0x2d, 0x00}, 10);
-    hci_recv_uart(buf, HCI_RECV_BUF_SIZE);
-
-    uart_set_baud(PORT_UART0, 3000000);
+    if (!ok) {
+        uart_deinit(PORT_UART0);
+        gpio_set_level(GPIO_BT_REG_ON_HW4, 0);
+        return false;
+    }
 
     hci_callbacks = NULL;
     semaphore_init(&hci_callbacks_sem, 1, 0);
@@ -242,12 +318,20 @@ void bt_hci_enable(void)
         .register_host_callback = hci_register_host_callback_uart,
     };
     esp_bluedroid_attach_hci_driver(&operations);
-    create_thread(bluetooth_hci_task, hci_stack, HCI_STACK_SIZE, 0, "bt_hci" IF_PRIO(, PRIORITY_BLUETOOTH));
+    hci_stop = false;
+    hci_thread_id = create_thread(bluetooth_hci_task, hci_stack, HCI_STACK_SIZE, 0, "bt_hci" IF_PRIO(, PRIORITY_BLUETOOTH));
+    return true;
 }
 
 void bt_hci_disable(void)
 {
-    uart_deinit(PORT_UART0);
+    /* Stop the receive thread and wait for it to exit. Left blocked in the
+     * middle of a packet, it would take the replies meant for the next
+     * bt_hci_enable(). */
+    hci_stop = true;
+    semaphore_release(&hci_callbacks_sem); /* if it never got started */
+    uart_deinit(PORT_UART0); /* wakes it from uart_rx() */
+    thread_wait(hci_thread_id);
     gpio_set_level(GPIO_BT_REG_ON_HW4, 0);
 #ifdef BT_DEBUG_PCAP
     int old_fd = hci_log_fd;

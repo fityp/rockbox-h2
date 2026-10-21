@@ -31,6 +31,13 @@
 #include "x1000/uart.h"
 #include "x1000/cpm.h"
 #include <assert.h>
+#ifdef HAVE_BLUETOOTH
+#ifdef ROCKBOX_HAS_LOGF
+#define LOGF_ENABLE
+#endif
+#include "logf.h"
+#include "x1000/dma_chn.h"
+#endif
 
 static dma_desc tx_dma_desc;
 static struct semaphore tx_done_sem;
@@ -185,14 +192,43 @@ void uart_tx(uart_port_t port, const uint8_t *buf, size_t len) {
     }
     commit_dcache_range(buf, len);
     commit_dcache_range(&tx_dma_desc, sizeof(dma_desc));
+#ifdef HAVE_BLUETOOTH
+    /* Drop a completion from a transfer that timed out below */
+    semaphore_wait(&tx_done_sem, TIMEOUT_NOBLOCK);
+#endif
     REG_DMA_CHN_DA(DMA_CHANNEL_UART_TX) = PHYSADDR(&tx_dma_desc);
     jz_writef(DMA_CHN_CS(DMA_CHANNEL_UART_TX), DES8(1), NDES(0));
     jz_set(DMA_DB, 1 << DMA_CHANNEL_UART_TX);
     jz_writef(DMA_CHN_CS(DMA_CHANNEL_UART_TX), CTE(1));
+#ifdef HAVE_BLUETOOTH
+    /* Bounded: if the peer never raises CTS (e.g. a Bluetooth controller that
+     * didn't come out of reset), flow control holds the data forever. */
+    if (semaphore_wait(&tx_done_sem, HZ) != OBJ_WAIT_SUCCEEDED) {
+        logf("uart_tx: dma timeout cs=%08lx lsr=%08lx msr=%08lx",
+             (unsigned long)REG_DMA_CHN_CS(DMA_CHANNEL_UART_TX),
+             (unsigned long)REG_UART_ULSR(port),
+             (unsigned long)REG_UART_UMSR(port));
+        /* Stop the transfer, or it stays armed and sends the rest of this
+         * buffer once the UART is set up again */
+        REG_DMA_CHN_CS(DMA_CHANNEL_UART_TX) = 0;
+        return;
+    }
+    long t0 = current_tick;
+    while (jz_readf(UART_ULSR(port), TEMP) == 0) {
+        if (TIME_AFTER(current_tick, t0 + HZ)) {
+            logf("uart_tx: tx-empty timeout lsr=%08lx msr=%08lx",
+                 (unsigned long)REG_UART_ULSR(port),
+                 (unsigned long)REG_UART_UMSR(port));
+            return;
+        }
+        yield();
+    }
+#else
     semaphore_wait(&tx_done_sem, TIMEOUT_BLOCK);
     while (jz_readf(UART_ULSR(port), TEMP) == 0) {
         yield();
     }
+#endif
 }
 
 size_t uart_rx(uart_port_t port, uint8_t *buf, size_t len) {
@@ -200,6 +236,24 @@ size_t uart_rx(uart_port_t port, uint8_t *buf, size_t len) {
     rx_available = len;
     jz_writef(UART_UIER(port), RTOIE(1), RDRIE(1));
     semaphore_wait(&rx_done_sem, TIMEOUT_BLOCK);
+    size_t rem = rx_available;
+    rx_available = 0;
+    return len - rem;
+}
+
+/* Like uart_rx(), but gives up after `timeout` ticks. Returns the number of
+ * bytes received, which is less than `len` on timeout. */
+size_t uart_rx_tmo(uart_port_t port, uint8_t *buf, size_t len, int timeout) {
+    rx_buf = buf;
+    rx_available = len;
+    jz_writef(UART_UIER(port), RTOIE(1), RDRIE(1));
+    if (semaphore_wait(&rx_done_sem, timeout) != OBJ_WAIT_SUCCEEDED) {
+        int oldlevel = disable_irq_save();
+        jz_writef(UART_UIER(port), RDRIE(0), RLSIE(0), RTOIE(0));
+        /* drop a release that raced with the timeout */
+        semaphore_wait(&rx_done_sem, TIMEOUT_NOBLOCK);
+        restore_irq(oldlevel);
+    }
     size_t rem = rx_available;
     rx_available = 0;
     return len - rem;

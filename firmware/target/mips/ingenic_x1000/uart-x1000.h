@@ -35,6 +35,8 @@ typedef enum {
 extern void uart_init(uart_port_t port, int baud);
 extern void uart_tx(uart_port_t port, const uint8_t *buf, size_t len);
 extern size_t uart_rx(uart_port_t port, uint8_t *buf, size_t len);
+extern size_t uart_rx_tmo(uart_port_t port, uint8_t *buf, size_t len,
+                          int timeout);
 extern bool uart_pending_rx(uart_port_t port);
 extern void uart_set_baud(uart_port_t port, int baud);
 extern void uart_deinit(uart_port_t port);

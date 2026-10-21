@@ -22,9 +22,17 @@
 #ifndef BT_HCI_H
 #define BT_HCI_H
 
+#include <stdbool.h>
+
+// Whether this particular unit has a usable Bluetooth controller. Targets
+// built with HAVE_BLUETOOTH may come in hardware variants without one; the
+// Bluetooth UI and autostart are hidden when this returns false.
+bool bt_hci_available(void);
+
 // Enables and registers the HCI driver for the target.
 // Can spawn up to one thread for this.
-void bt_hci_enable(void);
+// Returns false if the controller could not be brought up.
+bool bt_hci_enable(void);
 
 // Disables the HCI driver for the target.
 // If bt_hci_enable spawned any threads, they must exit now.

@@ -21,6 +21,7 @@
 #include "system.h"
 #include "audiohw.h"
 #include "pcm_sink.h"
+#include "pcm.h"
 #include "pcm_sw_volume.h"
 #include "pcm_sampr.h"
 #include "i2c-target.h"
@@ -174,6 +175,14 @@ void audiohw_set_volume(int vol_l, int vol_r)
     int l, r;
 
     eros_qn_set_last_vol(vol_l, vol_r);
+
+#ifdef HAVE_BLUETOOTH
+    /* The BT sink scales samples itself; give it the user's volume, not the
+     * line-out override below. */
+    pcm_set_sink_volume(PCM_SINK_BLUETOOTH,
+                        vol_l <= PCM5102A_VOLUME_MIN ? PCM_MUTE_LEVEL : vol_l,
+                        vol_r <= PCM5102A_VOLUME_MIN ? PCM_MUTE_LEVEL : vol_r);
+#endif
 
     l = vol_l;
     r = vol_r;
