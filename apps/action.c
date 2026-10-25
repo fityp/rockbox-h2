@@ -47,6 +47,7 @@
 
 #ifdef HAVE_BACKLIGHT
 #include "backlight.h"
+#include "audio.h"
 #if CONFIG_CHARGING
 #include "power.h"
 #endif
@@ -1094,6 +1095,72 @@ static inline int do_backlight(action_last_t *last, action_cur_t *cur, int actio
 #endif /* !HAVE_BACKLIGHT */
 }
 
+/*
+* "Now Playing on Backlight Off": when the backlight goes off while a track is
+* playing or paused, the file and database browsers and the menus go to the
+* WPS, so that the playback buttons always control playback while the screen
+* is dark. Uses ACTION_TREE_WPS, which those screens already handle.
+*/
+static bool wps_on_backlight_off_applies(int context)
+{
+#ifdef HAVE_BACKLIGHT
+    /* only from the list loops, not from dialogs or plugins */
+    context &= ~(ALLOW_SOFTLOCK | CONTEXT_LOCKED);
+    if (context != CONTEXT_TREE && context != CONTEXT_MAINMENU)
+        return false;
+    if (!(audio_status() & AUDIO_STATUS_PLAY))
+        return false;
+
+    switch (get_current_activity())
+    {
+        case ACTIVITY_MAINMENU:
+        case ACTIVITY_SETTINGS:
+        case ACTIVITY_SYSTEMSCREEN:
+        case ACTIVITY_FILEBROWSER:
+        case ACTIVITY_DATABASEBROWSER:
+        case ACTIVITY_PLUGINBROWSER:
+        case ACTIVITY_PLAYLISTBROWSER:
+        case ACTIVITY_PLAYLISTVIEWER:
+        case ACTIVITY_SHORTCUTSMENU:
+            return true;
+        default:
+            return false;
+    }
+#else
+    (void)context;
+    return false;
+#endif
+}
+
+static int do_wps_on_backlight_off(int context, int action)
+{
+#ifdef HAVE_BACKLIGHT
+    static bool bl_was_on = true;
+    static bool pending = false;
+    bool bl_on = is_backlight_on(false);
+
+    if (bl_on)
+        pending = false;
+    else if (bl_was_on)
+        pending = global_settings.wps_on_backlight_off;
+    bl_was_on = bl_on;
+
+    if (pending)
+    {
+        if (!wps_on_backlight_off_applies(context))
+            pending = false; /* went dark somewhere else; stay there */
+        else if (action == ACTION_NONE) /* don't eat a button press */
+        {
+            pending = false;
+            return ACTION_TREE_WPS;
+        }
+    }
+#else
+    (void)context;
+#endif
+    return action;
+}
+
 /********************************************************************
 * get_action_worker() searches the button list of the passed context
 * for the just pressed button. If there is a match it returns the
@@ -1279,6 +1346,7 @@ int get_action(int context, int timeout)
 #endif
 
     action = do_backlight(&action_last, &current, action);
+    action = do_wps_on_backlight_off(context, action);
 
     return action;
 }

@@ -161,6 +161,8 @@ MENUITEM_SETTING(backlight_fade_out, &global_settings.backlight_fade_out, NULL);
 MENUITEM_SETTING(bl_filter_first_keypress,
                     &global_settings.bl_filter_first_keypress,
                     filterfirstkeypress_callback);
+MENUITEM_SETTING(wps_on_backlight_off,
+                 &global_settings.wps_on_backlight_off, NULL);
 
 MENUITEM_SETTING(bl_selective_actions,
                  &global_settings.bl_selective_actions,
@@ -211,6 +213,7 @@ MAKE_MENU(lcd_settings,ID2P(LANG_LCD_MENU),
 #endif
             ,&bl_filter_first_keypress
             ,&sel_backlight
+            ,&wps_on_backlight_off
 # ifdef HAVE_LCD_SLEEP_SETTING
             ,&lcd_sleep_after_backlight_off
 # endif

@@ -17452,3 +17452,17 @@
     bluetooth: ""
   </voice>
 </phrase>
+<phrase>
+  id: LANG_WPS_ON_BACKLIGHT_OFF
+  desc: in LCD settings, browsers and menus go to the WPS when the backlight goes off
+  user: core
+  <source>
+    *: "Now Playing on Backlight Off"
+  </source>
+  <dest>
+    *: "Now Playing on Backlight Off"
+  </dest>
+  <voice>
+    *: "Now Playing on Backlight Off"
+  </voice>
+</phrase>

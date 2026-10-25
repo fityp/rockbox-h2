@@ -1490,6 +1490,8 @@ const struct settings_list settings[] = {
     OFFON_SETTING(0, bl_filter_first_keypress,
                   LANG_BACKLIGHT_FILTER_FIRST_KEYPRESS, false,
                   "backlight filters first keypress", NULL),
+    OFFON_SETTING(0, wps_on_backlight_off, LANG_WPS_ON_BACKLIGHT_OFF, false,
+                  "now playing on backlight off", NULL),
 #ifdef HAVE_REMOTE_LCD
     OFFON_SETTING(0, remote_bl_filter_first_keypress,
                   LANG_BACKLIGHT_FILTER_FIRST_KEYPRESS, false,

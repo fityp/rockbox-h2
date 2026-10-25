@@ -722,6 +722,7 @@ struct user_settings
                                 0=always, or time in seconds */
     bool caption_backlight; /* turn on backlight at end and start of track */
     bool bl_filter_first_keypress;   /* filter first keypress when dark? */
+    bool wps_on_backlight_off; /* browsers/menus go to the WPS when dark */
 #if CONFIG_CHARGING
     int backlight_timeout_plugged;
 #endif
