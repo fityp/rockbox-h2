@@ -984,6 +984,24 @@ static void bt_codec_setup(void)
         .is_edr = btc_av_is_peer_edr(),
     };
     current_codec->init(&bt_pcm_sink.caps, &peer_info, &pref_mcc);
+
+    /* The codecs list their rates highest first and default to the first.
+     * Make the default 44.1 kHz, the rate of most music, when the sink has
+     * it: for SBC that is also where the bitrate target gets bitpool 53. */
+    for (int i = 0; i < (int)bt_pcm_sink.caps.num_samprs; i++) {
+        if (bt_pcm_sink.caps.samprs[i] == SAMPR_44) {
+            bt_pcm_sink.caps.default_freq = i;
+            break;
+        }
+    }
+    current_codec->set_freq(bt_pcm_sink.caps.samprs[bt_pcm_sink.caps.default_freq],
+                            &pref_mcc);
+
+    /* The rate index PCM last set is into the previous connection's rate
+     * list, and the encoder was just reset: have PCM set the rate again when
+     * it switches to us, or the encoder runs at its own default while PCM
+     * feeds it something else. */
+    bt_pcm_sink.configured_freq = -1U;
     codec_ready = true;
     esp_err_t ret = esp_a2d_source_set_pref_mcc(conn_hdl, &pref_mcc);
     if (ret != ESP_OK) {
