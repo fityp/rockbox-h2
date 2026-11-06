@@ -789,6 +789,17 @@ static void allocate_tempbuf(void)
     tempbuf_handle = core_alloc_maximum(&size, &buflib_ops_locked);
     if (tempbuf_handle > 0)
     {
+        /* The buffer can't be shrunk while in use, so give back enough
+         * for audio_reset_buffer() in case playback is started meanwhile.
+         * Only do so while the commit keeps at least half of the memory;
+         * otherwise keep all of it, as playback can't be guaranteed
+         * without leaving the commit too little to work with. */
+        size_t reserve = audio_buffer_size_reqd();
+        if (size / 2 >= reserve)
+        {
+            size -= reserve;
+            core_shrink(tempbuf_handle, NULL, size);
+        }
         tempbuf = core_get_data(tempbuf_handle);
         tempbuf_size = size;
     }

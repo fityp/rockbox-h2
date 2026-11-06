@@ -882,6 +882,11 @@ size_t audio_buffer_available(void)
     return MAX(core_size, size);
 }
 
+size_t audio_buffer_size_reqd(void)
+{
+    return pcmbuf_size_reqd() + scratch_mem_size() + AUDIO_BUFFER_RESERVE;
+}
+
 #ifdef HAVE_ALBUMART
 static void clear_last_folder_album_art(void)
 {
