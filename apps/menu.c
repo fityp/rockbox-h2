@@ -768,6 +768,7 @@ int do_menu(const struct menu_item_ex *start_menu, int *start_selected,
                     break;
                 case SYS_CALL_HUNG_UP:
                 case BUTTON_MULTIMEDIA_PLAYPAUSE:
+                case BUTTON_MULTIMEDIA_PLAY:
                 /* remove splash from playlist_resume() */
                     redraw_lists = true;
                     break;

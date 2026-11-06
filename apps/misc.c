@@ -786,16 +786,21 @@ long default_event_handler_ex(long event, void (*callback)(void *), void *parame
 #ifdef HAVE_MULTIMEDIA_KEYS
         /* multimedia keys on keyboards, headsets */
         case BUTTON_MULTIMEDIA_PLAYPAUSE:
+        case BUTTON_MULTIMEDIA_PLAY:
+        case BUTTON_MULTIMEDIA_PAUSE:
         {
             int status = audio_status();
             if (status & AUDIO_STATUS_PLAY)
             {
                 if (status & AUDIO_STATUS_PAUSE)
-                    unpause_action(true);
-                else
+                {
+                    if (event != BUTTON_MULTIMEDIA_PAUSE)
+                        unpause_action(true);
+                }
+                else if (event != BUTTON_MULTIMEDIA_PLAY)
                     pause_action(true);
             }
-            else
+            else if (event != BUTTON_MULTIMEDIA_PAUSE)
                 if (playlist_resume() != -1)
                 {
                     playlist_start(global_status.resume_index,

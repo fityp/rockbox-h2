@@ -108,6 +108,9 @@ int button_apply_acceleration(const unsigned int data);
 #define BUTTON_MULTIMEDIA_FFWD      (BUTTON_MULTIMEDIA|0x20)
 #define BUTTON_MULTIMEDIA_VOLUME_UP   (BUTTON_MULTIMEDIA|0x40)
 #define BUTTON_MULTIMEDIA_VOLUME_DOWN (BUTTON_MULTIMEDIA|0x80)
+/* Play and pause only, not toggling, e.g. AVRCP's separate commands */
+#define BUTTON_MULTIMEDIA_PLAY      (BUTTON_MULTIMEDIA|0x100)
+#define BUTTON_MULTIMEDIA_PAUSE     (BUTTON_MULTIMEDIA|0x200)
 
 #define BUTTON_MULTIMEDIA_ALL       (BUTTON_MULTIMEDIA_PLAYPAUSE| \
                                      BUTTON_MULTIMEDIA_STOP| \
@@ -116,7 +119,9 @@ int button_apply_acceleration(const unsigned int data);
                                      BUTTON_MULTIMEDIA_REW | \
                                      BUTTON_MULTIMEDIA_FFWD| \
                                      BUTTON_MULTIMEDIA_VOLUME_UP| \
-                                     BUTTON_MULTIMEDIA_VOLUME_DOWN)
+                                     BUTTON_MULTIMEDIA_VOLUME_DOWN| \
+                                     BUTTON_MULTIMEDIA_PLAY| \
+                                     BUTTON_MULTIMEDIA_PAUSE)
 
 #ifdef HAVE_TOUCHSCREEN
 long touchscreen_last_touch(void);

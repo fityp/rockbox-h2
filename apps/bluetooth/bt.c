@@ -1219,9 +1219,13 @@ static void bt_app_avrc_tg_cb(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param
             logf("avrc-tg %d %d %d", event, param->psth_cmd.key_code, param->psth_cmd.key_state);
             if (param->psth_cmd.key_state == 1) {
                 switch (param->psth_cmd.key_code) {
+                    /* Separate commands, not a toggle: a headset may send
+                     * play on connecting, to playback already resumed */
                     case ESP_AVRC_PT_CMD_PLAY:
+                        button_queue_post(BUTTON_MULTIMEDIA_PLAY, 0);
+                        break;
                     case ESP_AVRC_PT_CMD_PAUSE:
-                        button_queue_post(BUTTON_MULTIMEDIA_PLAYPAUSE, 0);
+                        button_queue_post(BUTTON_MULTIMEDIA_PAUSE, 0);
                         break;
                     case ESP_AVRC_PT_CMD_STOP:
                         button_queue_post(BUTTON_MULTIMEDIA_STOP, 0);
