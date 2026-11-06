@@ -141,6 +141,9 @@ struct playlist_viewer {
     bool allow_view_text_plugin;
     unsigned long loading_tick;
     bool is_open;
+    int top_rows;               /* Rows above the first track: 1 for the
+                                   [Shuffle] entry of a playlist on disk     */
+    bool on_shuffle_row;        /* The [Shuffle] entry is selected           */
 };
 
 struct playlist_search_data
@@ -475,13 +478,18 @@ static bool playlist_viewer_init(struct playlist_viewer * viewer,
     viewer->moving_playlist_index = -1;
     viewer->initial_selection = recent_selection;
 
+    viewer->top_rows = viewer->playlist ? 1 : 0;
+
     if (!reload)
     {
         if (viewer->playlist)
             viewer->selected_track = recent_selection ? *recent_selection : 0;
         else
             viewer->selected_track = playlist_get_display_index() - 1;
+        viewer->on_shuffle_row = viewer->top_rows && viewer->selected_track == 0;
     }
+    else
+        viewer->on_shuffle_row = false;
 
     if (!update_playlist(true))
         return false;
@@ -802,7 +810,14 @@ static const char* playlist_callback_name(int selected_item,
                                           char *buffer,
                                           size_t buffer_len)
 {
-    struct playlist_entry *track = pv_get_track(data, selected_item);
+    struct playlist_viewer *local_viewer = (struct playlist_viewer *)data;
+    if (selected_item < local_viewer->top_rows)
+    {
+        snprintf(buffer, buffer_len, "[%s]", str(LANG_SHUFFLE));
+        return buffer;
+    }
+    struct playlist_entry *track = pv_get_track(local_viewer,
+                                    selected_item - local_viewer->top_rows);
 
     format_line(track, buffer, buffer_len);
 
@@ -814,7 +829,10 @@ static enum themable_icons playlist_callback_icons(int selected_item,
                                                    void *data)
 {
     struct playlist_viewer *local_viewer = (struct playlist_viewer *)data;
-    struct playlist_entry *track = pv_get_track(local_viewer, selected_item);
+    if (selected_item < local_viewer->top_rows)
+        return Icon_NOICON;
+    struct playlist_entry *track = pv_get_track(local_viewer,
+                                    selected_item - local_viewer->top_rows);
 
     if (track->index == local_viewer->current_playing_track)
     {
@@ -838,7 +856,13 @@ static enum themable_icons playlist_callback_icons(int selected_item,
 static int playlist_callback_voice(int selected_item, void *data)
 {
     struct playlist_viewer *local_viewer = (struct playlist_viewer *)data;
-    struct playlist_entry *track = pv_get_track(local_viewer, selected_item);
+    if (selected_item < local_viewer->top_rows)
+    {
+        talk_id(LANG_SHUFFLE, true);
+        return 0;
+    }
+    struct playlist_entry *track = pv_get_track(local_viewer,
+                                    selected_item - local_viewer->top_rows);
 
     if(global_settings.playlist_viewer_icons) {
         if (track->index == local_viewer->current_playing_track)
@@ -880,7 +904,7 @@ static void update_gui(struct gui_synclist * playlist_lists, bool init)
     if (init)
         gui_synclist_init(playlist_lists, playlist_callback_name,
                           &viewer, false, 1, NULL);
-    gui_synclist_set_nb_items(playlist_lists, viewer.num_tracks);
+    gui_synclist_set_nb_items(playlist_lists, viewer.num_tracks + viewer.top_rows);
     gui_synclist_set_voice_callback(playlist_lists,
                                     global_settings.talk_file?
                                     &playlist_callback_voice:NULL);
@@ -888,7 +912,8 @@ static void update_gui(struct gui_synclist * playlist_lists, bool init)
                   global_settings.playlist_viewer_icons?
                   &playlist_callback_icons:NULL);
     gui_synclist_set_title(playlist_lists, viewer.title, Icon_Playlist);
-    gui_synclist_select_item(playlist_lists, viewer.selected_track);
+    gui_synclist_select_item(playlist_lists, viewer.on_shuffle_row ? 0 :
+                             viewer.selected_track + viewer.top_rows);
     gui_synclist_draw(playlist_lists);
     gui_synclist_speak_item(playlist_lists);
 }
@@ -1010,7 +1035,8 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
             /*Needed because update_playlist gives wrong value when
                                                             playing is stopped*/
             viewer.current_playing_track = track;
-            gui_synclist_set_nb_items(&playlist_lists, viewer.num_tracks);
+            gui_synclist_set_nb_items(&playlist_lists,
+                                      viewer.num_tracks + viewer.top_rows);
 
             gui_synclist_draw(&playlist_lists);
             gui_synclist_speak_item(&playlist_lists);
@@ -1021,7 +1047,9 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
         /* during moving, another redraw is going to be needed,
          * since viewer.selected_track is updated too late (after the first draw)
          * drawing the moving item needs it */
-        viewer.selected_track=gui_synclist_get_sel_pos(&playlist_lists);
+        int row = gui_synclist_get_sel_pos(&playlist_lists);
+        viewer.on_shuffle_row = row < viewer.top_rows;
+        viewer.selected_track = viewer.on_shuffle_row ? 0 : row - viewer.top_rows;
         if (res)
         {
             bool reload = playlist_buffer_needs_reload(&viewer.buffer,
@@ -1041,7 +1069,8 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                 if (viewer.moving_track >= 0)
                 {
                     viewer.selected_track = viewer.moving_track;
-                    gui_synclist_select_item(&playlist_lists, viewer.moving_track);
+                    gui_synclist_select_item(&playlist_lists,
+                                     viewer.moving_track + viewer.top_rows);
                     viewer.moving_track = -1;
                     viewer.moving_playlist_index = -1;
                     gui_synclist_draw(&playlist_lists);
@@ -1061,7 +1090,24 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
                             playlist_buffer_get_track(&viewer.buffer,
                                                       viewer.selected_track);
                 int ret_val, start_index = current_track->index;
-                if (viewer.moving_track >= 0)
+                if (viewer.on_shuffle_row && viewer.moving_track < 0)
+                {
+                    /* Play the whole playlist in random order, from a
+                       random track, leaving the file's order alone */
+                    if (global_settings.party_mode || !warn_on_pl_erase())
+                        break;
+                    ret_val = playlist_set_current(viewer.playlist);
+                    viewer.playlist = NULL;
+                    if (!ret_val)
+                    {
+                        playlist_shuffle(current_tick, -1);
+                        playlist_start(0, 0, 0);
+                        if (viewer.initial_selection)
+                            *(viewer.initial_selection) = 0;
+                    }
+                    goto exit;
+                }
+                else if (viewer.moving_track >= 0)
                 {
                     /* Move track */
                     ret_val = playlist_move(viewer.playlist,
@@ -1119,6 +1165,8 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
             }
             case ACTION_STD_CONTEXT:
             {
+                if (viewer.on_shuffle_row)
+                    break;
                 int pv_context_result = context_menu(viewer.selected_track);
 
                 if (pv_context_result == PV_CONTEXT_USB)
@@ -1165,6 +1213,8 @@ enum playlist_viewer_result playlist_viewer_ex(const char* filename,
 #ifdef HAVE_HOTKEY
             case ACTION_TREE_HOTKEY:
             {
+                if (viewer.on_shuffle_row)
+                    break;
                 struct playlist_entry *current_track = playlist_buffer_get_track(
                                                             &viewer.buffer,
                                                             viewer.selected_track);
