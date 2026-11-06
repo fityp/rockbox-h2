@@ -4269,15 +4269,25 @@ static unsigned long audio_guess_frequency(struct mp3entry *id3)
     const struct pcm_sink_caps* caps = pcm_sink_caps(pcm_current_sink());
     bool have_44 = false;
     bool have_48 = false;
+    /* The sink's highest rate below the track's in the same family, so a
+     * 192 kHz track goes out at 96 kHz where the sink has it, not 48 kHz */
+    unsigned long best_lower = 0;
+    bool family_44 = (id3->frequency % 4000) != 0;
     for (size_t i = 0; i < caps->num_samprs; i += 1)
     {
-        if (caps->samprs[i] == SAMPR_44)
+        unsigned long sampr = caps->samprs[i];
+        if (sampr == SAMPR_44)
             have_44 = true;
-        if (caps->samprs[i] == SAMPR_48)
+        if (sampr == SAMPR_48)
             have_48 = true;
-        if (id3->frequency == caps->samprs[i])
+        if (id3->frequency == sampr)
             return id3->frequency;
+        if (sampr < id3->frequency && sampr > best_lower &&
+            ((sampr % 4000) != 0) == family_44)
+            best_lower = sampr;
     }
+    if (best_lower)
+        return best_lower;
     unsigned long fallback = (id3->frequency % 4000) ? SAMPR_44 : SAMPR_48;
     if ((fallback == SAMPR_44 && have_44) || (fallback == SAMPR_48 && have_48))
         return fallback;
