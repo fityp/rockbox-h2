@@ -6,6 +6,7 @@
 #include "btc_av.h"
 #include "button.h"
 #include "esp_a2dp_api.h"
+#include "audio.h"
 #include "esp_avrc_api.h"
 #include "esp_bt_defs.h"
 #include "esp_bt_device.h"
@@ -37,6 +38,7 @@
 #include "pcm_sw_volume.h"
 #include "mutex.h"
 #include "file.h"
+#include "string-extra.h"
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -79,6 +81,7 @@ static bool bt_ctrl_running = false;
 static esp_bd_addr_t bt_last_addr;
 static bool bt_have_last_addr = false;
 static volatile bool bt_connected = false;
+static volatile bool bt_rc_connected = false; /* AVRCP controller connected */
 /* New pairings are only accepted while the device list is on screen; bonded
  * devices reconnect with their stored link key and never get here. */
 static volatile bool bt_pairing_allowed = false;
@@ -207,13 +210,15 @@ static bool bluetooth_enable(bool show_splash)
             panicf("%s avrcp tg init failed: %d", __func__, ret);
         }
 
-        // esp_avrc_rn_evt_cap_mask_t evt_set = {0};
-        // esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set,
-        //                                     ESP_AVRC_RN_PLAY_STATUS_CHANGE);
-        // ret = esp_avrc_tg_set_rn_evt_cap(&evt_set);
-        // if (ret != ESP_OK) {
-        //     panicf("%s avrcp tg init failed: %d", __func__, ret);
-        // }
+        esp_avrc_rn_evt_cap_mask_t evt_set = {0};
+        esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set,
+                                            ESP_AVRC_RN_PLAY_STATUS_CHANGE);
+        esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set,
+                                            ESP_AVRC_RN_TRACK_CHANGE);
+        ret = esp_avrc_tg_set_rn_evt_cap(&evt_set);
+        if (ret != ESP_OK) {
+            panicf("%s avrcp tg init failed: %d", __func__, ret);
+        }
 
         if ((ret = esp_a2d_source_init()) != ESP_OK) {
             panicf("%s a2dp source init failed: %d", __func__, ret);
@@ -274,6 +279,7 @@ static void bluetooth_disable(void)
         esp_bluedroid_deinit();
         bt_hci_disable();
         bt_connected = false;
+        bt_rc_connected = false;
     }
     mutex_unlock(&bt_enable_mtx);
 }
@@ -321,6 +327,110 @@ bool bt_sink_suspend(void);
 static struct event_queue bt_ctrl_queue;
 static uint32_t bt_ctrl_stack[0x3000 / sizeof(uint32_t)];
 
+/* What is playing, for the display of an AVRCP controller such as a car.
+ * Polled on bt_ctrl, as nothing announces pause or resume. Read from the
+ * Bluedroid callback: threads only switch when they yield, and nothing here
+ * does, so it is never seen half written. */
+#define BT_AVRC_POLL_INTERVAL (HZ/2)
+#define BT_AVRC_STR_LEN 128
+
+static struct {
+    esp_avrc_playback_stat_t play_status;
+    char path[MAX_PATH];
+    char title[BT_AVRC_STR_LEN];
+    char artist[BT_AVRC_STR_LEN];
+    char album[BT_AVRC_STR_LEN];
+    char genre[BT_AVRC_STR_LEN];
+    char tracknum[12];
+    char length[12];
+} bt_avrc_np;
+
+static esp_avrc_playback_stat_t bt_avrc_play_status(void)
+{
+    int status = audio_status();
+    if (!(status & AUDIO_STATUS_PLAY))
+        return ESP_AVRC_PLAYBACK_STOPPED;
+    return (status & AUDIO_STATUS_PAUSE) ? ESP_AVRC_PLAYBACK_PAUSED
+                                         : ESP_AVRC_PLAYBACK_PLAYING;
+}
+
+static struct mp3entry *bt_avrc_track(void)
+{
+    if (bt_avrc_play_status() == ESP_AVRC_PLAYBACK_STOPPED)
+        return NULL;
+    struct mp3entry *id3 = audio_current_track();
+    return (id3 && id3->path[0]) ? id3 : NULL;
+}
+
+/* Copy a tag, dropping a UTF-8 sequence that didn't fit whole */
+static void bt_avrc_copy_str(char *dst, size_t size, const char *src)
+{
+    size_t len = strlcpy(dst, src ? src : "", size);
+    if (len >= size) {
+        len = size - 1;
+        while (len > 0 && ((unsigned char)dst[len - 1] & 0xC0) == 0x80)
+            len--;
+        if (len > 0)
+            len--; /* the lead byte, or the last plain character */
+        dst[len] = '\0';
+    }
+}
+
+/* Returns true if the track changed */
+static bool bt_avrc_update_track(void)
+{
+    struct mp3entry *id3 = bt_avrc_track();
+    const char *path = id3 ? id3->path : "";
+    if (!strcmp(bt_avrc_np.path, path))
+        return false;
+
+    strlcpy(bt_avrc_np.path, path, sizeof(bt_avrc_np.path));
+    const char *title = id3 ? id3->title : NULL;
+    if (id3 && !title) {
+        title = strrchr(path, '/');
+        title = title ? title + 1 : path;
+    }
+    bt_avrc_copy_str(bt_avrc_np.title, BT_AVRC_STR_LEN, title);
+    bt_avrc_copy_str(bt_avrc_np.artist, BT_AVRC_STR_LEN, id3 ? id3->artist : NULL);
+    bt_avrc_copy_str(bt_avrc_np.album, BT_AVRC_STR_LEN, id3 ? id3->album : NULL);
+    bt_avrc_copy_str(bt_avrc_np.genre, BT_AVRC_STR_LEN, id3 ? id3->genre_string : NULL);
+    bt_avrc_np.tracknum[0] = '\0';
+    bt_avrc_np.length[0] = '\0';
+    if (id3 && id3->tracknum > 0)
+        snprintf(bt_avrc_np.tracknum, sizeof(bt_avrc_np.tracknum), "%d", id3->tracknum);
+    if (id3)
+        snprintf(bt_avrc_np.length, sizeof(bt_avrc_np.length), "%lu", id3->length);
+    return true;
+}
+
+/* Without browsing, AVRCP identifies the selected track as all zeros and no
+ * track as all ones. */
+static void bt_avrc_send_track(esp_avrc_rn_rsp_t rsp)
+{
+    esp_avrc_rn_param_t rn;
+    memset(rn.elm_id, bt_avrc_np.path[0] ? 0x00 : 0xFF, sizeof(rn.elm_id));
+    esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_TRACK_CHANGE, rsp, &rn);
+}
+
+static void bt_avrc_send_play_status(esp_avrc_rn_rsp_t rsp)
+{
+    esp_avrc_rn_param_t rn;
+    rn.playback = bt_avrc_np.play_status;
+    esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_PLAY_STATUS_CHANGE, rsp, &rn);
+}
+
+/* A CHANGED response is dropped unless the controller has registered for it */
+static void bt_avrc_poll(void)
+{
+    esp_avrc_playback_stat_t play_status = bt_avrc_play_status();
+    if (play_status != bt_avrc_np.play_status) {
+        bt_avrc_np.play_status = play_status;
+        bt_avrc_send_play_status(ESP_AVRC_RN_RSP_CHANGED);
+    }
+    if (bt_avrc_update_track())
+        bt_avrc_send_track(ESP_AVRC_RN_RSP_CHANGED);
+}
+
 static void bt_sink_media_ctrl(esp_a2d_media_ctrl_t ctrl);
 
 static void bt_ctrl_task(void)
@@ -329,6 +439,7 @@ static void bt_ctrl_task(void)
     int autoconnect_tries = 0;
     long suspend_at = 0;
     long codec_setup_at = 0;
+    long avrc_poll_at = current_tick;
 
     while (true) {
         int tmo = autoconnect_tries > 0 ? BT_AUTOCONNECT_INTERVAL
@@ -347,7 +458,21 @@ static void bt_ctrl_task(void)
             if (tmo == TIMEOUT_BLOCK || left < tmo)
                 tmo = left;
         }
+        /* bt_connected too: a timeout also drives the autoconnect retries */
+        bool avrc_active = bt_connected && bt_rc_connected;
+        if (avrc_active) {
+            int left = avrc_poll_at - current_tick;
+            if (left < 1)
+                left = 1;
+            if (tmo == TIMEOUT_BLOCK || left < tmo)
+                tmo = left;
+        }
         queue_wait_w_tmo(&bt_ctrl_queue, &ev, tmo);
+
+        if (avrc_active && TIME_AFTER(current_tick, avrc_poll_at)) {
+            avrc_poll_at = current_tick + BT_AVRC_POLL_INTERVAL;
+            bt_avrc_poll();
+        }
 
         if (suspend_at && TIME_AFTER(current_tick, suspend_at)) {
             suspend_at = 0;
@@ -1229,6 +1354,7 @@ static void bt_app_avrc_tg_cb(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param
     switch (event) {
         case ESP_AVRC_TG_CONNECTION_STATE_EVT:
             logf("avrc-tg %d %d", event, param->conn_stat.connected);
+            bt_rc_connected = param->conn_stat.connected;
             break;
         case ESP_AVRC_TG_REMOTE_FEATURES_EVT:
             logf("avrc-tg %d %d %d", event, param->rmt_feats.ct_feat_flag, param->rmt_feats.feat_mask);
@@ -1265,6 +1391,33 @@ static void bt_app_avrc_tg_cb(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param
             break;
         case ESP_AVRC_TG_REGISTER_NOTIFICATION_EVT:
             logf("avrc-tg %d %d", event, param->reg_ntf.event_id);
+            switch (param->reg_ntf.event_id) {
+                case ESP_AVRC_RN_PLAY_STATUS_CHANGE:
+                    bt_avrc_np.play_status = bt_avrc_play_status();
+                    bt_avrc_send_play_status(ESP_AVRC_RN_RSP_INTERIM);
+                    break;
+                case ESP_AVRC_RN_TRACK_CHANGE:
+                    bt_avrc_update_track();
+                    bt_avrc_send_track(ESP_AVRC_RN_RSP_INTERIM);
+                    break;
+            }
+            break;
+        case ESP_AVRC_TG_GET_PLAY_STATUS_EVT: {
+            struct mp3entry *id3 = bt_avrc_track();
+            param->get_play_status.play_status = bt_avrc_play_status();
+            param->get_play_status.song_length = id3 ? id3->length : 0;
+            param->get_play_status.song_position = id3 ? id3->elapsed : 0;
+            break;
+        }
+        case ESP_AVRC_TG_GET_ELEM_ATTRS_EVT:
+            logf("avrc-tg %d", event);
+            bt_avrc_update_track();
+            param->get_elem_attrs.value[0] = bt_avrc_np.title;
+            param->get_elem_attrs.value[1] = bt_avrc_np.artist;
+            param->get_elem_attrs.value[2] = bt_avrc_np.album;
+            param->get_elem_attrs.value[3] = bt_avrc_np.tracknum;
+            param->get_elem_attrs.value[5] = bt_avrc_np.genre;
+            param->get_elem_attrs.value[6] = bt_avrc_np.length;
             break;
         default:
             logf("avrc-tg %d", event);

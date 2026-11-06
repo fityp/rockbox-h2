@@ -158,6 +158,8 @@ typedef enum {
     ESP_AVRC_TG_REGISTER_NOTIFICATION_EVT = 4,     /*!< register notification event */
     ESP_AVRC_TG_SET_PLAYER_APP_VALUE_EVT = 5,      /*!< set application attribute value, attribute refer to esp_avrc_ps_attr_ids_t */
     ESP_AVRC_TG_PROF_STATE_EVT = 6,                /*!< Indicate AVRCP target init or deinit complete */
+    ESP_AVRC_TG_GET_PLAY_STATUS_EVT = 7,           /*!< GetPlayStatus from remote device, fill in the callback param */
+    ESP_AVRC_TG_GET_ELEM_ATTRS_EVT = 8,            /*!< GetElementAttributes from remote device, fill in the callback param */
 } esp_avrc_tg_cb_event_t;
 
 /// AVRC metadata attribute mask
@@ -415,6 +417,10 @@ typedef union {
 
 } esp_avrc_ct_cb_param_t;
 
+/// Number of media attributes answered by a target: AVRC attribute ids 1..7
+/// (title, artist, album, track number, number of tracks, genre, playing time)
+#define ESP_AVRC_TG_NUM_ELEM_ATTRS 7
+
 /// AVRC target callback parameters
 typedef union {
     /**
@@ -471,6 +477,22 @@ typedef union {
     struct avrc_tg_init_stat_param {
         esp_avrc_init_state_t state;            /*!< avrc tg initialization param */
     } avrc_tg_init_stat;                        /*!< status to indicate avrcp tg init or deinit */
+
+    /**
+     * @brief ESP_AVRC_TG_GET_PLAY_STATUS_EVT
+     */
+    struct avrc_tg_get_play_status_param {
+        uint32_t song_length;                   /*!< filled by the callback: length of the song in milliseconds */
+        uint32_t song_position;                 /*!< filled by the callback: position in the song in milliseconds */
+        esp_avrc_playback_stat_t play_status;   /*!< filled by the callback: current status of playing */
+    } get_play_status;                          /*!< get play status command */
+
+    /**
+     * @brief ESP_AVRC_TG_GET_ELEM_ATTRS_EVT
+     */
+    struct avrc_tg_get_elem_attrs_param {
+        const char *value[ESP_AVRC_TG_NUM_ELEM_ATTRS]; /*!< filled by the callback: UTF-8 value of attribute id i+1, NULL if none; read right after the callback returns */
+    } get_elem_attrs;                           /*!< get element attributes command */
 
 } esp_avrc_tg_cb_param_t;
 

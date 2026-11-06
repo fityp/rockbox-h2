@@ -77,7 +77,7 @@ const static uint16_t cs_psth_dft_supported_cmd[8] = {0};
 static uint16_t s_psth_supported_cmd[8];
 
 const static uint16_t cs_rn_allowed_evt = \
-        0x2000; /* bit mask: 0=rsvd, 1=play_status, 2=track_chg, 3=reached_end,
+        0x2006; /* bit mask: 0=rsvd, 1=play_status, 2=track_chg, 3=reached_end,
                              4=reached_start, 5=pos_chg, 6=batt_status, 7=sys_status_chg,
                              8=player_app_setting, 9=now_playing_content, 10=avail_players, 11=addressed_player,
                              12=UID, 13=volume_chg */
@@ -883,9 +883,64 @@ static void btc_rc_upstreams_evt(UINT16 event, tAVRC_COMMAND *pavrc_cmd, UINT8 c
         btc_avrc_tg_cb_to_app(ESP_AVRC_TG_SET_PLAYER_APP_VALUE_EVT, &param);
     }
     break;
-    case AVRC_PDU_GET_PLAY_STATUS:
-    case AVRC_PDU_GET_ELEMENT_ATTR:
-    case AVRC_PDU_INFORM_DISPLAY_CHARSET:
+    case AVRC_PDU_GET_PLAY_STATUS: {
+        esp_avrc_tg_cb_param_t param;
+        memset(&param, 0, sizeof(esp_avrc_tg_cb_param_t));
+        btc_avrc_tg_cb_to_app(ESP_AVRC_TG_GET_PLAY_STATUS_EVT, &param);
+
+        tAVRC_RESPONSE avrc_rsp;
+        memset(&(avrc_rsp.get_play_status), 0, sizeof(tAVRC_GET_PLAY_STATUS_RSP));
+        avrc_rsp.get_play_status.opcode = opcode_from_pdu(AVRC_PDU_GET_PLAY_STATUS);
+        avrc_rsp.get_play_status.pdu = AVRC_PDU_GET_PLAY_STATUS;
+        avrc_rsp.get_play_status.status = AVRC_STS_NO_ERROR;
+        avrc_rsp.get_play_status.song_len = param.get_play_status.song_length;
+        avrc_rsp.get_play_status.song_pos = param.get_play_status.song_position;
+        avrc_rsp.get_play_status.play_status = param.get_play_status.play_status;
+        send_metamsg_rsp(btc_rc_cb.rc_handle, label, ctype, &avrc_rsp);
+    }
+    break;
+    case AVRC_PDU_GET_ELEMENT_ATTR: {
+        esp_avrc_tg_cb_param_t param;
+        memset(&param, 0, sizeof(esp_avrc_tg_cb_param_t));
+        btc_avrc_tg_cb_to_app(ESP_AVRC_TG_GET_ELEM_ATTRS_EVT, &param);
+
+        /* no attributes asked for means all of them */
+        tAVRC_ATTR_ENTRY attrs[ESP_AVRC_TG_NUM_ELEM_ATTRS];
+        UINT8 num_req = pavrc_cmd->get_elem_attrs.num_attr;
+        UINT8 num_attr = 0;
+        for (UINT8 i = 0; i < (num_req ? num_req : ESP_AVRC_TG_NUM_ELEM_ATTRS); i++) {
+            UINT32 id = num_req ? pavrc_cmd->get_elem_attrs.attrs[i] : (UINT32)i + 1;
+            if (id == 0 || id > ESP_AVRC_TG_NUM_ELEM_ATTRS ||
+                    num_attr == ESP_AVRC_TG_NUM_ELEM_ATTRS) {
+                continue;
+            }
+            const char *value = param.get_elem_attrs.value[id - 1];
+            attrs[num_attr].attr_id = id;
+            attrs[num_attr].name.charset_id = AVRC_CHARSET_ID_UTF8;
+            attrs[num_attr].name.str_len = value ? strlen(value) : 0;
+            attrs[num_attr].name.p_str = (UINT8 *)value;
+            num_attr++;
+        }
+
+        tAVRC_RESPONSE avrc_rsp;
+        memset(&(avrc_rsp.get_elem_attrs), 0, sizeof(tAVRC_GET_ELEM_ATTRS_RSP));
+        avrc_rsp.get_elem_attrs.opcode = opcode_from_pdu(AVRC_PDU_GET_ELEMENT_ATTR);
+        avrc_rsp.get_elem_attrs.pdu = AVRC_PDU_GET_ELEMENT_ATTR;
+        avrc_rsp.get_elem_attrs.status = AVRC_STS_NO_ERROR;
+        avrc_rsp.get_elem_attrs.num_attr = num_attr;
+        avrc_rsp.get_elem_attrs.p_attrs = attrs;
+        send_metamsg_rsp(btc_rc_cb.rc_handle, label, ctype, &avrc_rsp);
+    }
+    break;
+    case AVRC_PDU_INFORM_DISPLAY_CHARSET: {
+        tAVRC_RESPONSE avrc_rsp;
+        memset(&(avrc_rsp.inform_charset), 0, sizeof(tAVRC_RSP));
+        avrc_rsp.inform_charset.opcode = opcode_from_pdu(AVRC_PDU_INFORM_DISPLAY_CHARSET);
+        avrc_rsp.inform_charset.pdu = AVRC_PDU_INFORM_DISPLAY_CHARSET;
+        avrc_rsp.inform_charset.status = AVRC_STS_NO_ERROR;
+        send_metamsg_rsp(btc_rc_cb.rc_handle, label, ctype, &avrc_rsp);
+    }
+    break;
     //todo: check the valid response for these PDUs
     case AVRC_PDU_LIST_PLAYER_APP_ATTR:
     case AVRC_PDU_LIST_PLAYER_APP_VALUES:
@@ -1719,6 +1774,12 @@ static void btc_avrc_tg_send_rn_rsp(esp_avrc_rn_event_ids_t event_id, esp_avrc_r
     switch (event_id) {
     case ESP_AVRC_RN_VOLUME_CHANGE:
         avrc_rsp.reg_notif.param.volume = param->volume;
+        break;
+    case ESP_AVRC_RN_PLAY_STATUS_CHANGE:
+        avrc_rsp.reg_notif.param.play_status = param->playback;
+        break;
+    case ESP_AVRC_RN_TRACK_CHANGE:
+        memcpy(avrc_rsp.reg_notif.param.track, param->elm_id, sizeof(avrc_rsp.reg_notif.param.track));
         break;
     // todo: implement other event notifications
     default:
